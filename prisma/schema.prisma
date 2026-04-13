@@ -1,0 +1,329 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User Model
+model User {
+  id                  String    @id @default(cuid())
+  email               String    @unique
+  emailVerified       DateTime?
+  name                String?
+  password            String?
+  image               String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  // Relations
+  accounts            Account[]
+  sessions            Session[]
+  subscription        Subscription?
+  projects            Project[]
+  uploadedVideos      UploadedVideo[]
+  generatedClips      GeneratedClip[]
+  payments            Payment[]
+  usageLogs           UsageLog[]
+  supportTickets      SupportTicket[]
+
+  @@index([email])
+  @@map("users")
+}
+
+// NextAuth Models
+model Account {
+  id                  String  @id @default(cuid())
+  userId              String
+  type                String
+  provider            String
+  providerAccountId   String
+  refresh_token       String?  @db.Text
+  access_token        String?  @db.Text
+  expires_at          Int?
+  token_type          String?
+  scope               String?
+  id_token            String?  @db.Text
+  session_state       String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id            String   @id @default(cuid())
+  sessionToken  String   @unique
+  userId        String
+  expires       DateTime
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// Subscription Model
+model Subscription {
+  id                  String    @id @default(cuid())
+  userId              String    @unique
+  stripeCustomerId    String?   @unique
+  stripeSubscriptionId String?  @unique
+  plan                Plan      @default(FREE)
+  status              String    @default("active")
+  currentPeriodStart  DateTime
+  currentPeriodEnd    DateTime
+  cancelAtPeriodEnd   Boolean   @default(false)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([stripeCustomerId])
+  @@map("subscriptions")
+}
+
+enum Plan {
+  FREE
+  PRO
+  BUSINESS
+}
+
+// Project Model
+model Project {
+  id                  String    @id @default(cuid())
+  userId              String
+  name                String
+  description         String?   @db.Text
+  thumbnail           String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  uploadedVideos      UploadedVideo[]
+
+  @@index([userId])
+  @@map("projects")
+}
+
+// Uploaded Video Model
+model UploadedVideo {
+  id                  String    @id @default(cuid())
+  projectId           String
+  userId              String
+  title               String
+  description         String?   @db.Text
+  duration            Int       // in seconds
+  fileSize            Int       // in bytes
+  s3Key               String
+  s3Url               String
+  transcription       String?   @db.Text
+  transcriptionStatus String    @default("pending") // pending, processing, completed, failed
+  analysisStatus      String    @default("pending") // pending, processing, completed, failed
+  analysisData        Json?
+  thumbnailUrl        String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  project             Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  generatedClips      GeneratedClip[]
+  storageLog          UsageLog?
+
+  @@index([projectId])
+  @@index([userId])
+  @@index([transcriptionStatus])
+  @@index([analysisStatus])
+  @@map("uploaded_videos")
+}
+
+// Generated Clip Model
+model GeneratedClip {
+  id                  String    @id @default(cuid())
+  uploadedVideoId     String
+  userId              String
+  title               String
+  description         String?   @db.Text
+  startTime           Int       // in seconds
+  endTime             Int       // in seconds
+  duration            Int       // in seconds
+  format              Format    // 9:16 vertical
+  resolution          Resolution // 1080x1920 or 720x1280
+  aspectRatio         String    @default("9:16")
+  s3Key               String?
+  s3Url               String?
+  processingStatus    String    @default("pending") // pending, processing, completed, failed
+  thumbnailUrl        String?
+  captions            Json?     // Stores caption data
+  hasWatermark        Boolean   @default(true)
+  downloadCount       Int       @default(0)
+  viewCount           Int       @default(0)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  uploadedVideo       UploadedVideo @relation(fields: [uploadedVideoId], references: [id], onDelete: Cascade)
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job                 ProcessingJob?
+  edits               ClipEdit[]
+
+  @@index([uploadedVideoId])
+  @@index([userId])
+  @@index([processingStatus])
+  @@map("generated_clips")
+}
+
+enum Format {
+  VERTICAL_9_16
+  SQUARE_1_1
+  HORIZONTAL_16_9
+}
+
+enum Resolution {
+  FULL_HD_1080x1920
+  HD_720x1280
+  SD_480x854
+}
+
+// Clip Edit Model (for video editor)
+model ClipEdit {
+  id                  String    @id @default(cuid())
+  clipId              String
+  userId              String
+  originalStartTime   Int
+  originalEndTime     Int
+  newStartTime        Int?
+  newEndTime          Int?
+  titleText           String?
+  captionStyle        String?
+  backgroundMusic     String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  clip                GeneratedClip @relation(fields: [clipId], references: [id], onDelete: Cascade)
+
+  @@index([clipId])
+  @@map("clip_edits")
+}
+
+// Processing Job Model
+model ProcessingJob {
+  id                  String    @id @default(cuid())
+  clipId              String    @unique
+  jobStatus           JobStatus @default(PENDING)
+  jobType             String    @default("clip_generation")
+  progress            Int       @default(0)
+  totalSteps          Int       @default(10)
+  currentStep         Int       @default(0)
+  errorMessage        String?   @db.Text
+  logs                String?   @db.Text
+  startedAt           DateTime?
+  completedAt         DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  clip                GeneratedClip @relation(fields: [clipId], references: [id], onDelete: Cascade)
+
+  @@index([jobStatus])
+  @@index([createdAt])
+  @@map("processing_jobs")
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+// Payment Model
+model Payment {
+  id                  String    @id @default(cuid())
+  userId              String
+  stripePaymentIntentId String? @unique
+  amount              Int       // in cents
+  currency            String    @default("usd")
+  status              PaymentStatus @default(PENDING)
+  planName            String
+  description         String?
+  metadata            Json?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("payments")
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+// Usage Log Model (Track usage for each user)
+model UsageLog {
+  id                  String    @id @default(cuid())
+  userId              String
+  uploadedVideoId     String?   @unique
+  clipCount           Int       @default(0)
+  storageUsedBytes    Int       @default(0)
+  processingMinutes   Int       @default(0)
+  month               DateTime  // First day of the month
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  uploadedVideo       UploadedVideo? @relation(fields: [uploadedVideoId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, month])
+  @@index([userId])
+  @@index([month])
+  @@map("usage_logs")
+}
+
+// Support Ticket Model
+model SupportTicket {
+  id                  String    @id @default(cuid())
+  userId              String
+  subject             String
+  message             String    @db.Text
+  status              TicketStatus @default(OPEN)
+  priority            String    @default("normal")
+  response            String?   @db.Text
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@map("support_tickets")
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
